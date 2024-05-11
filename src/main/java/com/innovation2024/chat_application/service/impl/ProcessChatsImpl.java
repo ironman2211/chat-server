@@ -13,7 +13,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.Date;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 @Slf4j
@@ -26,52 +25,54 @@ public class ProcessChatsImpl implements ProcessChats {
     @Override
     public void updateChatList(Message message) {
         try {
-            Optional<User> senderOptional = userRepository.findById(new ObjectId(message.getSender()));
-            Optional<User> receiverOptional = userRepository.findById(new ObjectId(message.getReceiver()));
+            ObjectId senderId = new ObjectId(message.getSender());
+            ObjectId receiverId = new ObjectId(message.getReceiver());
+
+            Optional<User> senderOptional = userRepository.findById(senderId);
+            Optional<User> receiverOptional = userRepository.findById(receiverId);
 
             if (senderOptional.isPresent() && receiverOptional.isPresent()) {
                 User sender = senderOptional.get();
                 User receiver = receiverOptional.get();
-                Map<String, Chat> chats = sender.getChats();
-                Chat chat = chats.compute(message.getReceiver(), (key, existingChat) -> updateUserChatList(existingChat, message, receiver));
+
+                updateUserChat(sender, receiver, message);
+                updateUserChat(receiver, sender, message);
+
                 sender.setStatus(UserStatus.ONLINE);
-                userRepository.save(sender);
-                log.info("Updated chat: {}", chat);
+                userRepository.saveAll(List.of(sender, receiver));
+                log.info("Updated chat for sender {} and receiver {}", sender.getId(), receiver.getId());
             } else {
                 log.warn("Sender or receiver not found for message: {}", message);
             }
         } catch (Exception e) {
-
             log.error("Exception during updating chats", e);
         }
     }
 
-    private Chat updateUserChatList(Chat existingChat, Message message, User receiver) {
-        UserStatus status = receiver.getStatus(); // Get receiver status
-        String name = receiver.getFirstName() + "_" + receiver.getLastName(); // Get receiver name
-        if (existingChat != null) {
-            List<Message> lastMessage = existingChat.getLast_message();
-            if (existingChat.getLast_message().size() >= 5) {
-                lastMessage.remove(0);
-            }
-            lastMessage.add(message);
-            return Chat.builder()
-                    ._id(message.getReceiver())
-                    .picturePath(receiver.getPicturePath())
-                    .last_message(lastMessage)
-                    .status(status != null ? status : UserStatus.ONLINE) // Default to ONLINE status if receiver status is null
-                    .name(name)
-                    .lastUpdated(new Date())
-                    .build();
+    private void updateUserChat(User user, User counterParty, Message message) {
+        Chat chat = user.getChats().get(counterParty.getId());
+        if (chat == null) {
+            chat = createNewChat(counterParty,message);
+            user.getChats().put(counterParty.getId(), chat);
         } else {
-            return Chat.builder()
-                    ._id(message.getReceiver())
-                    .picturePath(receiver.getPicturePath())
-                    .last_message(List.of(message))
-                    .status(status != null ? status : UserStatus.ONLINE) // Default to ONLINE status if receiver status is null
-                    .name(name)
-                    .lastUpdated(new Date())
-                    .build();
+            List<Message> lastMessages = chat.getLast_message();
+            if (lastMessages.size() >= 5) {
+                lastMessages.remove(0);
+            }
+            lastMessages.add(message);
+            chat.setLast_message(lastMessages);
+            chat.setLastUpdated(new Date());
         }
+    }
+
+    private Chat createNewChat(User counterParty,Message message) {
+        return Chat.builder()
+                ._id(counterParty.getId())
+                .picturePath(counterParty.getPicturePath())
+                .status(counterParty.getStatus() != null ? counterParty.getStatus() : UserStatus.ONLINE)
+                .name(counterParty.getFirstName() + " " + counterParty.getLastName())
+                .lastUpdated(new Date())
+                .last_message(List.of(message))
+                .build();
     }
 }
